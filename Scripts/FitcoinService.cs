@@ -35,6 +35,10 @@ namespace Fitcoin {
             get {
                 return _linkRequestID;
             }
+
+            set {
+                _linkRequestID = value;
+            }
         }
 
         private string? _accessToken = null;
@@ -84,7 +88,29 @@ namespace Fitcoin {
             ));
         }
 
-        public void GetLinkRequestStatus() {}
+        public void GetLinkRequestStatus(Action<string>? onInternalError = null, Action<long, FitcoinLinkRequestStatus?>? onResponse = null) {
+            // TODO: Throw exception if access token is not specified
+
+            var url = baseURL + "/service/link/status";
+            url += $"?link_request_id={_linkRequestID}";
+
+            StartCoroutine(Get(
+                url,
+                onInternalError: onInternalError,
+                onResponse: (code, data) => {
+                    if (code != 200) {
+                        var errorResponse = JsonConvert.DeserializeObject<FitcoinResponseSimple>(data)?.message;
+                        if (errorResponse == null) errorResponse = "No error message";
+                        onInternalError?.Invoke(errorResponse);
+                        return;
+                    }
+
+                    var response = JsonConvert.DeserializeObject<FitcoinResponse<FitcoinLinkRequestStatus>>(data);
+                    
+                    onResponse?.Invoke(code, response?.data);
+                }
+            ));
+        }
 
         public void DeleteLinkRequest() {}
 
@@ -108,6 +134,23 @@ namespace Fitcoin {
                 onInternalError?.Invoke(request.error);
             else
                 onResponse?.Invoke(request.responseCode, request.downloadHandler.text);
+        }
+
+        private IEnumerator Get(
+            string uri,
+            Action<string>? onInternalError,
+            Action<long, string>? onResponse
+        ) {
+            var request = UnityWebRequest.Get(uri);
+
+            yield return request.SendWebRequest();
+
+            if (request.result != UnityWebRequest.Result.Success) {
+                onInternalError?.Invoke(request.error);
+            }
+            else {
+                onResponse?.Invoke(request.responseCode, request.downloadHandler.text);
+            }
         }
 
         private IEnumerator GetImage(

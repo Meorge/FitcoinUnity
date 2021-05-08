@@ -41,12 +41,32 @@ namespace Fitcoin {
             }
         }
 
+        public bool MonitoringLinkRequest {
+            get {
+                return _monitoringLinkRequest;
+            }
+        }
+
+        public FitcoinUserInfo? CurrentUserInfo {
+            get {
+                return _currentUserInfo;
+            }
+        }
+
+        public delegate void FitcoinUserInfoUpdateHandler(FitcoinUserInfo? newInfo);
+
+        public event FitcoinUserInfoUpdateHandler? onUserInfoUpdated;
+
         private string? _accessToken = null;
         private string? _userID = null;
 
         private string? _linkRequestID = null;
 
-        public void CreateLinkRequest(Action<string>? onInternalError = null, Action<long, string?>? onResponse = null) {
+        private bool _monitoringLinkRequest = false;
+
+        private FitcoinUserInfo? _currentUserInfo = null;
+
+        public void CreateLinkRequest(Action<string>? onError = null, Action<string?>? onResponse = null) {
             // TODO: Throw exception if access token is not specified
 
             Debug.Log($"Create link request, with access token {_accessToken}");
@@ -61,20 +81,21 @@ namespace Fitcoin {
             StartCoroutine(Post(
                 url,
                 formData,
-                onInternalError: onInternalError,
+                onInternalError: onError,
                 onResponse: (code, data) => {
                     _linkRequestID = null;
                     if (code == 200) {
-                        var response = JsonConvert.DeserializeObject<FitcoinResponse<string>>(data);
-                        _linkRequestID = response?.data;
-
+                        _linkRequestID = JsonConvert.DeserializeObject<FitcoinResponse<string>>(data)?.data;
+                        onResponse?.Invoke(_linkRequestID);
+                    } else {
+                        var errorResponse = JsonConvert.DeserializeObject<FitcoinResponseSimple>(data)?.message ?? "No error message";
+                        onError?.Invoke(errorResponse);
                     }
-                    onResponse?.Invoke(code, _linkRequestID);
                 }
             ));
         }
 
-        public void GetQRCodeForLinkRequest(Action<string>? onInternalError = null, Action<long, Texture>? onResponse = null) {
+        public void GetQRCodeForLinkRequest(Action<string>? onError = null, Action<Texture>? onResponse = null) {
             // TODO: Throw exception if access token is not specified
 
             var url = baseURL + "/service/link/qr";
@@ -83,12 +104,18 @@ namespace Fitcoin {
 
             StartCoroutine(GetImage(
                 url,
-                onInternalError: onInternalError,
-                onResponse: onResponse
+                onInternalError: onError,
+                onResponse: (code, texture) => {
+                    if (code == 200) {
+                        onResponse?.Invoke(texture);
+                    } else {
+                        onError?.Invoke($"Error code {code}");
+                    }
+                }
             ));
         }
 
-        public void GetLinkRequestStatus(Action<string>? onInternalError = null, Action<long, FitcoinLinkRequestStatus?>? onResponse = null) {
+        public void GetLinkRequestStatus(Action<string>? onError = null, Action<FitcoinLinkRequestStatus?>? onResponse = null) {
             // TODO: Throw exception if access token is not specified
 
             var url = baseURL + "/service/link/status";
@@ -96,23 +123,112 @@ namespace Fitcoin {
 
             StartCoroutine(Get(
                 url,
-                onInternalError: onInternalError,
+                onInternalError: onError,
                 onResponse: (code, data) => {
-                    if (code != 200) {
-                        var errorResponse = JsonConvert.DeserializeObject<FitcoinResponseSimple>(data)?.message;
-                        if (errorResponse == null) errorResponse = "No error message";
-                        onInternalError?.Invoke(errorResponse);
-                        return;
+                    if (code == 200) {
+                        var response = JsonConvert.DeserializeObject<FitcoinResponse<FitcoinLinkRequestStatus>>(data);
+                        onResponse?.Invoke(response?.data);
+                    } else {
+                        var errorResponse = JsonConvert.DeserializeObject<FitcoinResponseSimple>(data)?.message ?? "No error message";
+                        onError?.Invoke(errorResponse);
                     }
 
-                    var response = JsonConvert.DeserializeObject<FitcoinResponse<FitcoinLinkRequestStatus>>(data);
-                    
-                    onResponse?.Invoke(code, response?.data);
+
                 }
             ));
         }
 
-        public void DeleteLinkRequest() {}
+        public void MonitorLinkRequestStatus(float queryInterval = 5f, Action<string>? onError = null, Action<FitcoinLinkRequestStatus?>? onResponse = null) {
+            // TODO: Throw exception if access token is not granted
+
+            StartCoroutine(_MonitorLinkRequestStatus(queryInterval, onError, onResponse));
+        }
+
+        public void StopMonitoringLinkRequestStatus() {
+            _monitoringLinkRequest = false;
+        }
+
+        private IEnumerator _MonitorLinkRequestStatus(float queryInterval, Action<string>? onError = null, Action<FitcoinLinkRequestStatus?>? onResponse = null) {
+            float timer = 0f;
+            
+            _monitoringLinkRequest = true;
+
+            while (_monitoringLinkRequest) {
+                if (timer < queryInterval) {
+                    timer += Time.deltaTime;
+                    yield return null;
+                    continue;
+                }
+
+                GetLinkRequestStatus(
+                    onError,
+                    onResponse: (status) => {
+                        onResponse?.Invoke(status);
+                        timer = 0f;
+                    }
+                );
+
+                while (timer >= queryInterval) {
+                    yield return null;
+                }
+            }
+
+            Debug.Log("Stop monitoring link request");
+        }
+
+        public void DeleteLinkRequest(Action<string>? onError = null, Action? onResponse = null) {
+            // TODO: Throw exception if access token is not specified
+
+            if (_linkRequestID == null || _linkRequestID == "") {
+                Debug.Log("Link request ID is empty so don't try to delete it");
+                return;
+            }
+            
+            var url = baseURL + "/service/link/clear";
+            url += $"?link_request_id={_linkRequestID}";
+
+            StartCoroutine(Post(
+                url,
+                new WWWForm(),
+                onInternalError: onError,
+                onResponse: (code, data) => {
+                    _linkRequestID = null;
+
+                    if (code == 200) {
+                        onResponse?.Invoke();
+                    } else {
+                        var errorResponse = JsonConvert.DeserializeObject<FitcoinResponseSimple>(data)?.message ?? "No error message";
+                        onError?.Invoke(errorResponse);
+                    }
+                    
+                }
+            ));
+        }
+
+        public void GetUserInfo(Action<string>? onError = null, Action<FitcoinUserInfo?>? onResponse = null) {
+            // TODO: Throw exception if access token is not specified
+
+            var url = baseURL + "/service/user_info";
+            url += $"?access_token={_accessToken}";
+            url += $"&user_id={_userID}";
+
+            StartCoroutine(Get(
+                url,
+                onInternalError: onError,
+                onResponse: (code, data) => {
+                    if (code == 200) {
+                        _currentUserInfo = JsonConvert.DeserializeObject<FitcoinResponse<FitcoinUserInfo>>(data)?.data;
+                        onResponse?.Invoke(_currentUserInfo);
+                    } else {
+                        var errorResponse = JsonConvert.DeserializeObject<FitcoinResponseSimple>(data)?.message ?? "No error message";
+                        _currentUserInfo = null;
+                        onError?.Invoke(errorResponse);
+                    }
+                    onUserInfoUpdated?.Invoke(_currentUserInfo);
+                }
+            ));
+
+        }
 
         public void MakePurchase(int amount) {}
 

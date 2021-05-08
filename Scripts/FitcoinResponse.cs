@@ -17,4 +17,9 @@ namespace Fitcoin {
         public string status;
         public string user_id = null;
     }
+
+    public class FitcoinUserInfo {
+        public string username;
+        public int balance;
+    }
 }

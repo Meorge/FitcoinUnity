@@ -205,6 +205,8 @@ namespace Fitcoin {
             ));
         }
 
+        public void UpdateUserInfo() => GetUserInfo(null, null);
+
         public void GetUserInfo(Action<string>? onError = null, Action<FitcoinUserInfo?>? onResponse = null) {
             // TODO: Throw exception if access token is not specified
 
@@ -214,7 +216,11 @@ namespace Fitcoin {
 
             StartCoroutine(Get(
                 url,
-                onInternalError: onError,
+                onInternalError: (message) => {
+                    _currentUserInfo = null;
+                    onUserInfoUpdated?.Invoke(_currentUserInfo);
+                    onError?.Invoke(message);
+                },
                 onResponse: (code, data) => {
                     if (code == 200) {
                         _currentUserInfo = JsonConvert.DeserializeObject<FitcoinResponse<FitcoinUserInfo>>(data)?.data;
@@ -230,7 +236,31 @@ namespace Fitcoin {
 
         }
 
-        public void MakePurchase(int amount) {}
+        public void MakePurchase(int amount, Action<string>? onError = null, Action<int>? onResponse = null) {
+            // TODO: Throw exception if access token is not specified
+
+            var url = baseURL + "/service/purchase";
+            url += $"?access_token={_accessToken}";
+            url += $"&user_id={_userID}";
+            url += $"&amount={amount}";
+
+            StartCoroutine(Post(
+                url,
+                new WWWForm(),
+                onInternalError: (message) => {
+                    onError?.Invoke(message);
+                },
+                onResponse: (code, data) => {
+                    if (code == 200) {
+                        var newBalance = JsonConvert.DeserializeObject<FitcoinResponse<int>>(data)?.data ?? 0;
+                        onResponse?.Invoke(newBalance);
+                    } else {
+                        var errorResponse = JsonConvert.DeserializeObject<FitcoinResponseSimple>(data)?.message ?? "No error message";
+                        onError?.Invoke(errorResponse);
+                    }
+                }
+            ));
+        }
 
 
 
@@ -246,7 +276,7 @@ namespace Fitcoin {
 
             yield return request.SendWebRequest();
 
-            if (request.result != UnityWebRequest.Result.Success)
+            if (request.result == UnityWebRequest.Result.ConnectionError || request.result == UnityWebRequest.Result.DataProcessingError)
                 onInternalError?.Invoke(request.error);
             else
                 onResponse?.Invoke(request.responseCode, request.downloadHandler.text);
@@ -261,7 +291,7 @@ namespace Fitcoin {
 
             yield return request.SendWebRequest();
 
-            if (request.result != UnityWebRequest.Result.Success) {
+            if (request.result == UnityWebRequest.Result.ConnectionError || request.result == UnityWebRequest.Result.DataProcessingError) {
                 onInternalError?.Invoke(request.error);
             }
             else {
@@ -277,7 +307,7 @@ namespace Fitcoin {
             var request = UnityWebRequestTexture.GetTexture(uri);
             yield return request.SendWebRequest();
 
-            if (request.result != UnityWebRequest.Result.Success) {
+            if (request.result == UnityWebRequest.Result.ConnectionError || request.result == UnityWebRequest.Result.DataProcessingError) {
                 onInternalError?.Invoke(request.error);
             }
             else {
